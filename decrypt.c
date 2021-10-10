@@ -5,7 +5,6 @@
 #include <string.h>
 #include <inttypes.h>
 #include <unistd.h>
-#include <errno.h>
 #include <time.h>
 
 uint8_t key[16] = {0x0f, 0x15, 0x71, 0xc9, 0x47, 0xd9, 0xe8, 0x59, 0x0c, 0xb7, 0xad, 0xd6, 0xaf, 0x7f, 0x67, 0x98};
@@ -111,7 +110,7 @@ void transposeRoundKey(){
 
 void subBytes() {
     uint8_t i=0;
-    for (i = 0; i < 16; i++){
+    for (i = 0; i < 16; i++) {
         text[i] = inverseSbox[text[i]];
     }
 };
@@ -140,7 +139,6 @@ void shiftRow() {
         text[i] = text[i + 1];
     }
     text[15] = temp;
-
 };
 
 uint8_t multiply(uint8_t collumn, int multiplier) {
@@ -154,18 +152,34 @@ uint8_t multiply(uint8_t collumn, int multiplier) {
     else if (multiplier==3) {
         collumn = collumn ^ multiply(collumn, 2);
     }
-
+    else if (multiplier==9){
+        collumn = multiply(multiply(multiply(collumn,2),2),2)^collumn;
+    }
+    else if (multiplier==11){
+        collumn = multiply(multiply(multiply(collumn,2),2)^collumn,2)^collumn;
+    }
+    else if (multiplier==13){
+        collumn = multiply(multiply(multiply(collumn,2)^collumn,2),2)^collumn;
+    }
+    else if (multiplier==14){
+        collumn = multiply(multiply(multiply(collumn,2)^collumn,2)^collumn,2);
+        
+    }
     return collumn;
 }
 
+// x.9=(((x.2).2).2)+x
+// x.11=((((x.2).2)+x).2)+x
+// x.13=((((x.2)+x).2).2)+x
+// x.14=((((x.2)+x).2)+x).2
 void mixCollumn() {
     int i;
     for(i=0;i<4;i++) {
         uint8_t collumn[4] = {text[i], text[4+i], text[8+i], text[12+i]};
-        text[i] = multiply(collumn[0], 2) ^ multiply(collumn[1], 3) ^ collumn[2] ^ collumn[3];
-        text[4+i] = collumn[0] ^ multiply(collumn[1], 2) ^ multiply(collumn[2], 3) ^ collumn[3];
-        text[8+i] = collumn[0] ^ collumn[1] ^ multiply(collumn[2], 2) ^ multiply(collumn[3], 3);
-        text[12+i] = multiply(collumn[0], 3) ^ collumn[1] ^ collumn[2] ^ multiply(collumn[3], 2);
+        text[i] = multiply(collumn[0], 14) ^ multiply(collumn[1], 11) ^ multiply(collumn[2], 13) ^ multiply(collumn[3], 9);
+        text[4+i] = multiply(collumn[0], 9) ^ multiply(collumn[1], 14) ^ multiply(collumn[2], 11) ^ multiply(collumn[3], 13);
+        text[8+i] = multiply(collumn[0], 13) ^ multiply(collumn[1], 9) ^ multiply(collumn[2], 14) ^ multiply(collumn[3], 11);
+        text[12+i] = multiply(collumn[0], 11) ^ multiply(collumn[1], 13) ^ multiply(collumn[2], 9) ^ multiply(collumn[3], 14);
     }
 }
 
@@ -192,38 +206,106 @@ void addRoundKey(int round) {
 void decrypt(){
     int i;
     
-    expanded_key = keyExpansion();
-    // for (i=0; i<44; i++){
-    //     printf("%x\n", expanded_key[i]);
-    // }
-    
-    // initial round
     transposeText();
+
+    // initial round
     addRoundKey(10);
     
-    //round 1
+    // round 1-9
+    for (i=9;i>0;i--) {
+        shiftRow();
+        subBytes();
+        addRoundKey(i);
+        mixCollumn();
+    }
+    
+    //round 10
     shiftRow();
     subBytes();
-   
-    
-    // // round 2-9
-    // for (i=9;i<0;i--) {
-    //     shiftRow();
-    //     subBytes();
-    //     addRoundKey(i);
-    //     mixCollumn();
-    // }
+    addRoundKey(0);
 
-    // //round 10
-    // for (i=0;i<16;i++){
-    //     text[i] =  text[i]^key[i];
-    // }
+    transposeText();
 
-    for(i=0;i<16;i++){
-        printf("%x ", text[i]);
+    // for(i=0;i<16;i++){
+    //     printf("%x ", text[i]);
+    // }
+}
+
+void recvData(int new_socket, char* filename) {
+    FILE* file = fopen(filename, "wb");
+
+    memset(text, 0, 16);
+    int dataLength;
+    int fileSize = 0;
+
+    while(dataLength = recv(new_socket, text, 16, 0) == 16){
+        int i;
+        decrypt();
+
+        // debug
+        // for(i=0;i<16;i++){
+        //     printf("%x ", text[i]);
+        // }
+
+        fwrite(text, sizeof(uint8_t), 16, file);
+
+        memset(text, 0, 16);
+        fileSize = fileSize + dataLength;
+        printf("%d\n", fileSize);
     }
+
+    fclose(file);
+    // truncate(filename, fileSize - text[0]);
 }
 
-int main() {
-    decrypt();
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        printf("File is not specified !\n");
+        return 0;
+    }
+
+    int sock = 0, valread;
+    struct sockaddr_in serv_addr;
+    char buffer[1024] = {0};
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+    
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(8080);
+       
+    // Convert IPv4 and IPv6 addresses from text to binary form
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0) 
+    {
+        printf("\nInvalid address/ Address not supported \n");
+        return -1;
+    }
+   
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        return -1;
+    }
+    
+    clock_t start;
+    start = clock();
+
+    expanded_key = keyExpansion();
+
+    char* filename = argv[1];
+    // printf("%s", filename);
+
+    // read(sock , filename, 1024);
+    recvData(sock, filename);
+    
+    printf("File message received\n");
+
+    clock_t end;
+    end = clock();
+    printf("--- %lf seconds ---", ((double)end-start)/CLOCKS_PER_SEC);
+
+    return 0;
 }
+
