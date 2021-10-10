@@ -34,7 +34,7 @@ void recvData(int new_socket, char* filename) {
 
         memset(text, 0, 16);
         fileSize = fileSize + dataLength;
-        printf("%d\n", fileSize);
+        // printf("%d\n", fileSize);
     }
 
     fclose(file);

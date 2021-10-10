@@ -36,7 +36,7 @@ int sendData(int new_socket, char* filename) {
         send(new_socket, text, 16, 0);
         memset(text, 0, 16);
         endLength = 16 - dataLength;
-        printf("%d\n", endLength);
+        // printf("%d\n", endLength);
     }
 
     fclose(file);
